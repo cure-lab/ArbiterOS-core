@@ -15,15 +15,30 @@ from .core.instruction_binding import InstructionBinding, InstructionType, Instr
 from .core.managed_state import ManagedState
 from .core.observability import FlightDataRecorder
 
+# Optional Redis checkpointer helper
+import os
+
+def build_redis_checkpointer_from_env():
+	"""Return a RedisSaver instance if REDIS_URL is set, else None."""
+	try:
+		from langgraph.checkpoint.redis import RedisSaver
+		url = os.getenv("REDIS_URL")
+		if not url:
+			return None
+		return RedisSaver.from_url(url)
+	except Exception:
+		return None
+
 __all__ = [
-    "ArbiterGraph",
-    "PolicyEngine", 
-    "PolicyConfig",
-    "PolicyRule",
-    "PolicyRuleType",
-    "InstructionBinding",
-    "InstructionType",
-    "InstructionResult",
-    "ManagedState",
-    "FlightDataRecorder",
+	"ArbiterGraph",
+	"PolicyEngine", 
+	"PolicyConfig",
+	"PolicyRule",
+	"PolicyRuleType",
+	"InstructionBinding",
+	"InstructionType",
+	"InstructionResult",
+	"ManagedState",
+	"FlightDataRecorder",
+	"build_redis_checkpointer_from_env",
 ]
