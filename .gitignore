@@ -1,0 +1,13 @@
+# ignore all files in the .gitignore
+
+# ignore all the __pycache__ files
+__pycache__/
+
+# ignore all the .pyc files
+*.pyc
+
+# ignore all the .pyo files
+*.pyo
+
+# ignore all the .pyd files
+*.pyd

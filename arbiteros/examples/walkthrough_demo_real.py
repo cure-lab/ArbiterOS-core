@@ -33,11 +33,13 @@ from arbiteros import (
 
 DUCK_URL = "https://duckduckgo.com/html/"
 DUCK_URL_ALT = "https://r.jina.ai/http://duckduckgo.com/html/"  # via jina mirror (read-only fetch)
+DUCK_INSTANT_API = "https://api.duckduckgo.com/"
 WIKI_SUMMARY_API = "https://en.wikipedia.org/api/rest_v1/page/summary/{}"
+WIKI_PAGE_TEXT = "https://r.jina.ai/http://en.wikipedia.org/wiki/{}"  # read-only text proxy
 
 
 def _client() -> httpx.Client:
-	return httpx.Client(timeout=15, headers={
+	return httpx.Client(timeout=20, headers={
 		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 			"(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
 		"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -59,6 +61,23 @@ def fetch_duckduckgo_alt(query: str) -> str:
 		r = client.get(DUCK_URL_ALT, params=params)
 		r.raise_for_status()
 		return r.text
+
+
+def fetch_duckduckgo_instant(query: str) -> str:
+	# DuckDuckGo Instant Answer API (no key). Returns concise abstract + related topics.
+	params = {"q": query, "format": "json", "no_html": 1, "skip_disambig": 1}
+	with httpx.Client(timeout=15, headers={"User-Agent": "Mozilla/5.0"}) as client:
+		r = client.get(DUCK_INSTANT_API, params=params)
+		r.raise_for_status()
+		data = r.json()
+		abstract = (data.get("AbstractText") or "").strip()
+		related = []
+		for t in data.get("RelatedTopics", [])[:5]:
+			text = t.get("Text") if isinstance(t, dict) else None
+			if text:
+				related.append(text)
+		text_parts = [p for p in [abstract, "\n".join(related)] if p]
+		return "\n".join(text_parts)
 
 
 def extract_snippets_from_duck(html: str, limit: int = 5) -> List[str]:
@@ -89,6 +108,18 @@ def fetch_wikipedia_summary(topic: str) -> str:
 		if r.status_code == 200:
 			data = r.json()
 			return data.get("extract", "")
+	return ""
+
+
+def fetch_wikipedia_page_text(topic: str) -> str:
+	slug = topic.strip().replace(" ", "_")
+	url = WIKI_PAGE_TEXT.format(slug)
+	with httpx.Client(timeout=20, headers={"User-Agent": "Mozilla/5.0"}) as client:
+		r = client.get(url)
+		if r.status_code == 200:
+			text = r.text
+			# r.jina.ai 返回的已是可读文本，不需要复杂清洗；简单裁剪
+			return text.strip()
 	return ""
 
 
@@ -174,7 +205,13 @@ def impl_plan(state: PlanInput) -> Dict[str, Any]:
 
 
 def _best_effort_search_text(query: str) -> str:
-	# 依次尝试：DDG → DDG（jina 代理）→ Wikipedia 摘要 → 最终兜底文本
+	# 尝试顺序：DDG Instant → DDG HTML → DDG（jina 代理）→ Wikipedia 摘要 → Wikipedia 页面文本 → 兜底提示
+	try:
+		ia = fetch_duckduckgo_instant(query)
+		if ia and len(ia.strip()) > 0:
+			return ia
+	except Exception:
+		pass
 	try:
 		html = fetch_duckduckgo(query)
 		snips = extract_snippets_from_duck(html, 5)
@@ -192,15 +229,13 @@ def _best_effort_search_text(query: str) -> str:
 	wiki = fetch_wikipedia_summary(query)
 	if wiki:
 		return wiki
+	page_text = fetch_wikipedia_page_text(query)
+	if page_text:
+		return page_text[:1000] + ("..." if len(page_text) > 1000 else "")
 	return "No public summary available. Please check network or try another query."
 
 
 def impl_search(state: SearchInput) -> Dict[str, Any]:
-	if state.force_fail:
-		# 模拟失败场景：仍然尝试给出可读兜底文本，避免 <error>network</error>
-		text = _best_effort_search_text(state.query)
-		return {"text": text, "success": text != ""}
-	# 正常路径：尽最大努力返回可读文本
 	text = _best_effort_search_text(state.query)
 	return {"text": text, "success": text != "" and not text.startswith("No public summary")}
 
